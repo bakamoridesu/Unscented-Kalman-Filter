@@ -26,10 +26,10 @@ UKF::UKF() {
   P_ = MatrixXd(n_x_, n_x_);
 
   // Process noise standard deviation longitudinal acceleration in m/s^2
-  std_a_ = 30;
+  std_a_ = 0.5;
 
   // Process noise standard deviation yaw acceleration in rad/s^2
-  std_yawdd_ = 30;
+  std_yawdd_ = 0.3;
   
   //DO NOT MODIFY measurement noise values below these are provided by the sensor manufacturer.
   // Laser measurement noise standard deviation position1 in m
@@ -108,6 +108,7 @@ void UKF::ProcessMeasurement(MeasurementPackage meas_package) {
     x_ << 0, 0, 0, 0, 0;
     if(meas_package.sensor_type_ == MeasurementPackage::RADAR)
     {
+      cout << "Initialization with radar measurement.." << endl;
       float ro = meas_package.raw_measurements_(0);
       float phi = meas_package.raw_measurements_(1);
       float ro_dot = meas_package.raw_measurements_(2);
@@ -122,15 +123,18 @@ void UKF::ProcessMeasurement(MeasurementPackage meas_package) {
       float v = sqrt(v_x * v_x + v_y * v_y);
 
       x_ << p_x, p_y, v, phi, 0;
+      cout << "Initialized!" << endl;
     }
     else // LIDAR measurement
     {
+      cout << "Initialization with laser measurement.." << endl;
       x_ << meas_package.raw_measurements_(0), meas_package.raw_measurements_(1), 0, 0, 0;
+      cout << "Initialized!" << endl;
     }
 
     is_initialized_ = true;
     time_us_ = meas_package.timestamp_;
-    return;
+    //return;
   }
   // Calculate delta t
   double dt = (meas_package.timestamp_ - time_us_) / 1000000.0;
@@ -162,6 +166,7 @@ void UKF::Prediction(double delta_t) {
   */
 
   // Augmented mean state
+  //cout << "Prediction started.." << endl;
   VectorXd x_aug = VectorXd(n_aug_);
 
   // Augmented state covariance
@@ -180,7 +185,6 @@ void UKF::Prediction(double delta_t) {
   P_aug.topLeftCorner(n_x_, n_x_) = P_;
   P_aug(n_x_,n_x_) = std_a_ * std_a_;
   P_aug(n_x_ + 1, n_x_ + 1) = std_yawdd_ * std_yawdd_;
-
   // create square root matrix
   MatrixXd L = P_aug.llt().matrixL();
 
@@ -191,7 +195,6 @@ void UKF::Prediction(double delta_t) {
     Xsig_aug.col(i+1)       = x_aug + sqrt(lambda_ + n_aug_) * L.col(i);
     Xsig_aug.col(i+1+n_aug_) = x_aug - sqrt(lambda_ + n_aug_) * L.col(i);
   }
-
   // predict sigma points
   for (int i(0); i < aug_size_; ++i)
   {
@@ -234,15 +237,14 @@ void UKF::Prediction(double delta_t) {
     Xsig_pred_(3,i) = yaw_p;
     Xsig_pred_(4,i) = yawd_p;
   }
-
   // set weights
   weights_.fill(0.5/(n_aug_+lambda_));
   weights_(0) = lambda_/(lambda_+n_aug_);
 
   //predicted state mean
   x_.fill(0.0);
-  for (int i(0); i < aug_size_ + 1; ++i) {
-    x_ = x_+ weights_(i) * Xsig_pred_.col(i);
+  for (int i(0); i < aug_size_; ++i) {
+    x_ = x_ + weights_(i) * Xsig_pred_.col(i);
   }
 
   //predicted state covariance matrix
@@ -257,6 +259,7 @@ void UKF::Prediction(double delta_t) {
     }
     P_ = P_ + weights_(i) * x_diff * x_diff.transpose() ;
   }
+  //cout << "Prediction finished!" << endl;
 }
 
 /**
@@ -274,6 +277,7 @@ void UKF::UpdateLidar(MeasurementPackage meas_package) {
   */
 
   // measurement dimension
+  //cout << "Laser update started.." << endl;
   VectorXd z_pred = H_laser_ * x_;
   VectorXd y = meas_package.raw_measurements_ - z_pred;
   MatrixXd Ht = H_laser_.transpose();
@@ -292,8 +296,10 @@ void UKF::UpdateLidar(MeasurementPackage meas_package) {
   // write NIS value to file, will analyse it later with python
   ofstream NIS_laser_file;
   NIS_laser_file.open (laser_file_, ios::app);
-  NIS_laser_file << NIS_laser << "\n";
+  //auto str = std::to_string(NIS_laser);
+  NIS_laser_file << NIS_laser << ";";
   NIS_laser_file.close();
+  //cout << "Laser update finished!" << endl;
 }
 
 /**
@@ -310,6 +316,7 @@ void UKF::UpdateRadar(MeasurementPackage meas_package) {
   You'll also need to calculate the radar NIS.
   */
   // measurement dimension
+  //cout << "Radar update started.." << endl;
   int n_z_= 3;
   // measurements
   VectorXd z = VectorXd(n_z_);
@@ -334,10 +341,11 @@ void UKF::UpdateRadar(MeasurementPackage meas_package) {
     // measurement model
     Zsig(0,i) = sqrt(p_x * p_x + p_y * p_y);
     double phi = atan2(p_y, p_x);
+    /*
     if(fabs(phi) > M_PI)
     {
       phi -= round(phi/(2.0 * M_PI)) * (2.0 * M_PI);
-    }
+    }*/
     Zsig(1,i) = phi;
     Zsig(2,i) = (p_x * v1 + p_y * v2 ) / sqrt(p_x * p_x + p_y * p_y);
   }
@@ -419,6 +427,7 @@ void UKF::UpdateRadar(MeasurementPackage meas_package) {
   double NIS_Radar = z_diff.transpose()*S.inverse()*z_diff;
   ofstream NIS_radar_file;
   NIS_radar_file.open (radar_file_, ios::app);
-  NIS_radar_file << NIS_Radar << "\n";
+  NIS_radar_file << NIS_Radar << ";";
   NIS_radar_file.close();
+  //cout << "Radar update finished!" << endl;
 }
