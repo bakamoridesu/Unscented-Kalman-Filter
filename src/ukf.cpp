@@ -52,8 +52,6 @@ UKF::UKF() {
 
   Complete the initialization. See ukf.h for other member properties.
 
-
-
   Hint: one or more values initialized above might be wildly off...
   */
   // augmented state dimension
@@ -156,6 +154,103 @@ void UKF::Prediction(double delta_t) {
   Complete this function! Estimate the object's location. Modify the state
   vector, x_. Predict sigma points, the state, and the state covariance matrix.
   */
+
+  // Augmented mean state
+  VectorXd x_aug = VectorXd(n_aug_);
+
+  // Augmented state covariance
+  MatrixXd P_aug = MatrixXd(n_aug_, n_aug_);
+
+  // Sigma points
+  MatrixXd Xsig_aug = MatrixXd(n_aug_, aug_size_);
+
+  // initialize augmented mean state
+  x_aug.head(n_x_) = x_;
+  x_aug(n_x_) = 0;
+  x_aug(n_x_ + 1) = 0;
+
+  // initialize augmented state covariance
+  P_aug.fill(0.0);
+  P_aug.topLeftCorner(n_x_, n_x_) = P_;
+  P_aug(n_x_,n_x_) = std_a_ * std_a_;
+  P_aug(n_x_ + 1, n_x_ + 1) = std_yawdd_ * std_yawdd_;
+
+  // create square root matrix
+  MatrixXd L = P_aug.llt().matrixL();
+
+  // create augmented sigma points
+  Xsig_aug.col(0)  = x_aug;
+  for (int i(0); i< n_aug_; ++i)
+  {
+    Xsig_aug.col(i+1)       = x_aug + sqrt(lambda_ + n_aug_) * L.col(i);
+    Xsig_aug.col(i+1+n_aug_) = x_aug - sqrt(lambda_ + n_aug_) * L.col(i);
+  }
+
+  // predict sigma points
+  for (int i(0); i < aug_size_; ++i)
+  {
+    double p_x = Xsig_aug(0, i);
+    double p_y = Xsig_aug(1, i);
+    double v = Xsig_aug(2, i);
+    double yaw = Xsig_aug(3, i);
+    double yawd = Xsig_aug(4, i);
+    double nu_a = Xsig_aug(5, i);
+    double nu_yawdd = Xsig_aug(6, i);
+
+    double px_pred;
+    double py_pred;
+
+    //avoid division by zero
+    if (fabs(yawd) > 0.0001) {
+      px_pred = p_x + v/yawd * ( sin (yaw + yawd*delta_t) - sin(yaw));
+      py_pred = p_y + v/yawd * ( cos(yaw) - cos(yaw+yawd*delta_t) );
+    }
+    else {
+      px_pred = p_x + v*delta_t*cos(yaw);
+      py_pred = p_y + v*delta_t*sin(yaw);
+    }
+    double v_p = v;
+    double yaw_p = yaw + yawd*delta_t;
+    double yawd_p = yawd;
+
+    //add noise
+    px_pred = px_pred + 0.5*nu_a*delta_t*delta_t * cos(yaw);
+    py_pred = py_pred + 0.5*nu_a*delta_t*delta_t * sin(yaw);
+    v_p = v_p + nu_a*delta_t;
+
+    yaw_p = yaw_p + 0.5*nu_yawdd*delta_t*delta_t;
+    yawd_p = yawd_p + nu_yawdd*delta_t;
+
+    //write predicted sigma point into right column
+    Xsig_pred_(0,i) = px_pred;
+    Xsig_pred_(1,i) = py_pred;
+    Xsig_pred_(2,i) = v_p;
+    Xsig_pred_(3,i) = yaw_p;
+    Xsig_pred_(4,i) = yawd_p;
+  }
+
+  // set weights
+  weights_.fill(0.5/(n_aug_+lambda_));
+  weights_(0) = lambda_/(lambda_+n_aug_);
+
+  //predicted state mean
+  x_.fill(0.0);
+  for (int i(0); i < aug_size_ + 1; i++) {
+    x_ = x_+ weights_(i) * Xsig_pred_.col(i);
+  }
+
+  //predicted state covariance matrix
+  P_.fill(0.0);
+  for (int i(0); i < aug_size_; i++) {  //iterate over sigma points
+    // state difference
+    VectorXd x_diff = Xsig_pred_.col(i) - x_;
+    //angle normalization
+    if(fabs(x_diff(3)) > M_PI)
+    {
+      x_diff(3) -= round(x_diff(3)/(2.0 * M_PI)) * (2.0 * M_PI);
+    }
+    P_ = P_ + weights_(i) * x_diff * x_diff.transpose() ;
+  }
 }
 
 /**
@@ -171,6 +266,8 @@ void UKF::UpdateLidar(MeasurementPackage meas_package) {
 
   You'll also need to calculate the lidar NIS.
   */
+
+
 }
 
 /**
