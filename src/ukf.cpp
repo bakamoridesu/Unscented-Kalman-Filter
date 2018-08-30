@@ -17,12 +17,12 @@ UKF::UKF() {
 
   // if this is false, radar measurements will be ignored (except during init)
   use_radar_ = true;
-
+  n_x_ = 5;
   // initial state vector
-  x_ = VectorXd(5);
+  x_ = VectorXd(n_x_);
 
   // initial covariance matrix
-  P_ = MatrixXd(5, 5);
+  P_ = MatrixXd(n_x_, n_x_);
 
   // Process noise standard deviation longitudinal acceleration in m/s^2
   std_a_ = 30;
@@ -52,8 +52,35 @@ UKF::UKF() {
 
   Complete the initialization. See ukf.h for other member properties.
 
+
+
   Hint: one or more values initialized above might be wildly off...
   */
+  // augmented state dimension
+  n_aug_ = 7;
+  aug_size_ = 2 * n_aug_ + 1;
+  // Weights of sigma points
+  weights_ = VectorXd(aug_size_);
+  // Sigma point spreading parameter
+  lambda_ = 3 - n_aug_;
+  // Predicted sigma points
+  Xsig_pred_ = MatrixXd(n_x_, aug_size_);
+
+  // State covariance matrix (start with identity, then will see)
+  P_ << 1, 0, 0, 0, 0,
+        0, 1, 0, 0, 0,
+        0, 0, 1, 0, 0,
+        0, 0, 0, 1, 0,
+        0, 0, 0, 0, 1;
+
+  H_laser_ = MatrixXd(2, n_x_);
+  H_laser_ << 1, 0, 0, 0, 0,
+              0, 1, 0, 0, 0;
+  // Measurement covariance matrix R - laser
+  R_laser_ = MatrixXd(2,2);
+  R_laser_ << std_laspx_ * std_laspx_, 0,
+              0, std_laspy_ * std_laspy_;
+
 }
 
 UKF::~UKF() {}
@@ -69,6 +96,52 @@ void UKF::ProcessMeasurement(MeasurementPackage meas_package) {
   Complete this function! Make sure you switch between lidar and radar
   measurements.
   */
+
+  // Initialize the state x_ with first measurement.
+  if(!is_initialized_)
+  {
+    cout << "UKF: " << endl;
+    x_ << 0, 0, 0, 0, 0;
+    if(meas_package.sensor_type_ == MeasurementPackage::RADAR)
+    {
+      float ro = meas_package.raw_measurements_(0);
+      float phi = meas_package.raw_measurements_(1);
+      float ro_dot = meas_package.raw_measurements_(2);
+      if(fabs(phi) > M_PI)
+      {
+        phi -= round(phi / (2 * M_PI)) * (2 * M_PI);
+      }
+      float p_x = ro * cos(phi);
+      float p_y = ro * sin(phi);
+      float v_x = ro_dot * cos(phi);
+      float v_y = ro_dot * sin(phi);
+      float v = sqrt(v_x * v_x + v_y * v_y);
+
+      x_ << p_x, p_y, v, phi, 0;
+    }
+    else // LIDAR measurement
+    {
+      x_ << meas_package.raw_measurements_(0), meas_package.raw_measurements_(1), 0, 0, 0;
+    }
+
+    is_initialized_ = true;
+    time_us_ = meas_package.timestamp_;
+    return;
+  }
+  // Calculate delta t
+  double dt = (meas_package.timestamp_ - time_us_) / 1000000.0;
+  // Predict state
+  Prediction(dt);
+  // Measurement update
+  if(meas_package.sensor_type_ == MeasurementPackage::RADAR)
+  {
+    UpdateRadar(meas_package);
+  }
+  else
+  {
+    UpdateLidar(meas_package);
+  }
+  time_us_ = meas_package.timestamp_;
 }
 
 /**

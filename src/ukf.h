@@ -63,10 +63,15 @@ public:
 
   ///* Augmented state dimension
   int n_aug_;
+  ///* Size of augmented matrices and vectors
+  int aug_size_;
 
   ///* Sigma point spreading parameter
   double lambda_;
 
+  ///* Measurement covariance matrix - laser
+  MatrixXd R_laser_;
+  MatrixXd H_laser_;
 
   /**
    * Constructor
