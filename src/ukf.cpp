@@ -1,6 +1,7 @@
 #include "ukf.h"
 #include "Eigen/Dense"
 #include <iostream>
+#include <fstream>
 
 using namespace std;
 using Eigen::MatrixXd;
@@ -79,6 +80,10 @@ UKF::UKF() {
   R_laser_ << std_laspx_ * std_laspx_, 0,
               0, std_laspy_ * std_laspy_;
 
+  //laser_file_ = "NIS_laser.txt";
+
+  NIS_laser_file_.open(laser_file_, std::ofstream::out | std::ofstream::trunc);
+  NIS_radar_file_.open(radar_file_, std::ofstream::out | std::ofstream::trunc);
 }
 
 UKF::~UKF() {}
@@ -99,6 +104,7 @@ void UKF::ProcessMeasurement(MeasurementPackage meas_package) {
   if(!is_initialized_)
   {
     cout << "UKF: " << endl;
+
     x_ << 0, 0, 0, 0, 0;
     if(meas_package.sensor_type_ == MeasurementPackage::RADAR)
     {
@@ -202,24 +208,24 @@ void UKF::Prediction(double delta_t) {
 
     //avoid division by zero
     if (fabs(yawd) > 0.0001) {
-      px_pred = p_x + v/yawd * ( sin (yaw + yawd*delta_t) - sin(yaw));
-      py_pred = p_y + v/yawd * ( cos(yaw) - cos(yaw+yawd*delta_t) );
+      px_pred = p_x + v/yawd * ( sin (yaw + yawd * delta_t) - sin(yaw));
+      py_pred = p_y + v/yawd * ( cos(yaw) - cos(yaw + yawd * delta_t) );
     }
     else {
-      px_pred = p_x + v*delta_t*cos(yaw);
-      py_pred = p_y + v*delta_t*sin(yaw);
+      px_pred = p_x + v * delta_t * cos(yaw);
+      py_pred = p_y + v * delta_t * sin(yaw);
     }
     double v_p = v;
-    double yaw_p = yaw + yawd*delta_t;
+    double yaw_p = yaw + yawd * delta_t;
     double yawd_p = yawd;
 
     //add noise
-    px_pred = px_pred + 0.5*nu_a*delta_t*delta_t * cos(yaw);
-    py_pred = py_pred + 0.5*nu_a*delta_t*delta_t * sin(yaw);
-    v_p = v_p + nu_a*delta_t;
+    px_pred = px_pred + 0.5 * nu_a * delta_t * delta_t * cos(yaw);
+    py_pred = py_pred + 0.5 * nu_a * delta_t * delta_t * sin(yaw);
+    v_p = v_p + nu_a * delta_t;
 
-    yaw_p = yaw_p + 0.5*nu_yawdd*delta_t*delta_t;
-    yawd_p = yawd_p + nu_yawdd*delta_t;
+    yaw_p = yaw_p + 0.5 * nu_yawdd * delta_t * delta_t;
+    yawd_p = yawd_p + nu_yawdd * delta_t;
 
     //write predicted sigma point into right column
     Xsig_pred_(0,i) = px_pred;
@@ -235,13 +241,13 @@ void UKF::Prediction(double delta_t) {
 
   //predicted state mean
   x_.fill(0.0);
-  for (int i(0); i < aug_size_ + 1; i++) {
+  for (int i(0); i < aug_size_ + 1; ++i) {
     x_ = x_+ weights_(i) * Xsig_pred_.col(i);
   }
 
   //predicted state covariance matrix
   P_.fill(0.0);
-  for (int i(0); i < aug_size_; i++) {  //iterate over sigma points
+  for (int i(0); i < aug_size_; ++i) {  //iterate over sigma points
     // state difference
     VectorXd x_diff = Xsig_pred_.col(i) - x_;
     //angle normalization
@@ -267,7 +273,27 @@ void UKF::UpdateLidar(MeasurementPackage meas_package) {
   You'll also need to calculate the lidar NIS.
   */
 
+  // measurement dimension
+  VectorXd z_pred = H_laser_ * x_;
+  VectorXd y = meas_package.raw_measurements_ - z_pred;
+  MatrixXd Ht = H_laser_.transpose();
+  MatrixXd S = H_laser_ * P_ * Ht + R_laser_;
+  MatrixXd Si = S.inverse();
+  MatrixXd PHt = P_ * Ht;
+  MatrixXd K = PHt * Si;
+  //new estimate
+  x_ = x_ + (K * y);
+  long x_size = x_.size();
+  MatrixXd I = MatrixXd::Identity(x_size, x_size);
+  P_ = (I - K * H_laser_) * P_;
+  // calculate NIS and append to file
+  double NIS_laser = y.transpose()*Si*y;
 
+  // write NIS value to file, will analyse it later with python
+  ofstream NIS_laser_file;
+  NIS_laser_file.open (laser_file_, ios::app);
+  NIS_laser_file << NIS_laser << "\n";
+  NIS_laser_file.close();
 }
 
 /**
@@ -283,4 +309,116 @@ void UKF::UpdateRadar(MeasurementPackage meas_package) {
 
   You'll also need to calculate the radar NIS.
   */
+  // measurement dimension
+  int n_z_= 3;
+  // measurements
+  VectorXd z = VectorXd(n_z_);
+  z << meas_package.raw_measurements_(0),
+       meas_package.raw_measurements_(1),
+       meas_package.raw_measurements_(2);
+
+  // Sigma points in measurement space
+  MatrixXd Zsig = MatrixXd(n_z_, aug_size_);
+
+  // transform sigma points into measurement space
+  for (int i(0); i < aug_size_; ++i) {  //2n+1 simga points
+
+    double p_x = Xsig_pred_(0,i);
+    double p_y = Xsig_pred_(1,i);
+    double v  = Xsig_pred_(2,i);
+    double yaw = Xsig_pred_(3,i);
+
+    double v1 = cos(yaw) * v;
+    double v2 = sin(yaw) * v;
+
+    // measurement model
+    Zsig(0,i) = sqrt(p_x * p_x + p_y * p_y);
+    double phi = atan2(p_y, p_x);
+    if(fabs(phi) > M_PI)
+    {
+      phi -= round(phi/(2.0 * M_PI)) * (2.0 * M_PI);
+    }
+    Zsig(1,i) = phi;
+    Zsig(2,i) = (p_x * v1 + p_y * v2 ) / sqrt(p_x * p_x + p_y * p_y);
+  }
+
+  // mean predicted measurement
+  VectorXd z_pred = VectorXd(n_z_);
+  z_pred.fill(0.0);
+  for (int i(0); i < aug_size_; ++i) {
+    z_pred = z_pred + weights_(i) * Zsig.col(i);
+  }
+
+  // measurement covariance matrix S
+  MatrixXd S = MatrixXd(n_z_, n_z_);
+  S.fill(0.0);
+  for (int i(0); i < aug_size_; ++i) {  //2n+1 simga points
+    //residual
+    VectorXd z_diff = Zsig.col(i) - z_pred;
+
+    //angle normalization
+    if(fabs(z_diff(1)) > M_PI)
+    {
+      z_diff(1) -= round(z_diff(1)/(2.0 * M_PI)) * (2.0 * M_PI);
+    }
+
+    S = S + weights_(i) * z_diff * z_diff.transpose();
+  }
+
+  //add measurement noise covariance matrix
+  MatrixXd R = MatrixXd(n_z_,n_z_);
+  R <<    std_radr_*std_radr_, 0, 0,
+          0, std_radphi_*std_radphi_, 0,
+          0, 0,std_radrd_*std_radrd_;
+
+  S = S + R;
+
+  //create matrix for cross correlation Tc
+  MatrixXd Tc = MatrixXd(n_x_, n_z_);
+
+  //calculate cross correlation matrix
+  Tc.fill(0.0);
+  for (int i(0); i < aug_size_; ++i) {  //2n+1 simga points
+
+    //residual
+    VectorXd z_diff = Zsig.col(i) - z_pred;
+    //angle normalization
+    if(fabs(z_diff(1)) > M_PI)
+    {
+      z_diff(1) -= round(z_diff(1)/(2.0 * M_PI)) * (2.0 * M_PI);
+    }
+
+    // state difference
+    VectorXd x_diff = Xsig_pred_.col(i) - x_;
+    //angle normalization
+    if(fabs(x_diff(3)) > M_PI)
+    {
+      x_diff(3) -= round(x_diff(3)/(2.0 * M_PI)) * (2.0 * M_PI);
+    }
+
+    Tc = Tc + weights_(i) * x_diff * z_diff.transpose();
+  }
+
+  //Kalman gain K;
+  MatrixXd K = Tc * S.inverse();
+
+  //residual
+  VectorXd z_diff = z - z_pred;
+
+  //angle normalization
+  if(fabs(z_diff(1)) > M_PI)
+  {
+    z_diff(1) -= round(z_diff(1)/(2.0 * M_PI)) * (2.0 * M_PI);
+  }
+
+  //update state mean and covariance matrix
+  x_ = x_ + K * z_diff;
+  P_ = P_ - K*S*K.transpose();
+
+  //NIS calculation for Radar
+  double NIS_Radar = z_diff.transpose()*S.inverse()*z_diff;
+  ofstream NIS_radar_file;
+  NIS_radar_file.open (radar_file_, ios::app);
+  NIS_radar_file << NIS_Radar << "\n";
+  NIS_radar_file.close();
 }

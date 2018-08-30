@@ -9,6 +9,7 @@
 
 using Eigen::MatrixXd;
 using Eigen::VectorXd;
+using namespace std;
 
 class UKF {
 public:
@@ -72,6 +73,13 @@ public:
   ///* Measurement covariance matrix - laser
   MatrixXd R_laser_;
   MatrixXd H_laser_;
+
+  ///* NIS file storages
+  ofstream NIS_laser_file_;
+  ofstream NIS_radar_file_;
+
+  const string laser_file_ = "NIS_laser.txt";
+  const string radar_file_ = "NIS_radar.txt";
 
   /**
    * Constructor
