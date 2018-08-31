@@ -66,7 +66,7 @@ UKF::UKF() {
   Xsig_pred_ = MatrixXd(n_x_, aug_size_);
 
   // State covariance matrix (start with identity, then will see)
-  P_ << 0.4, 0.1, 0, 0, 0,
+  P_ << 0.4, 0, 0, 0, 0,
         0, 0.4, 0, 0, 0,
         0, 0, 0.4, 0, 0,
         0, 0, 0, 0.4, 0,
